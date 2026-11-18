@@ -1027,6 +1027,7 @@ Settings LoadSettings()
   kodi::addon::GetSettingString("username", s.username);
   kodi::addon::GetSettingString("password", s.password);
   kodi::addon::GetSettingString("dispatcharr_password", s.dispatcharrPassword);
+  kodi::addon::GetSettingBoolean("enable_dispatcharr_dvr", s.enableDispatcharrDvr);
   kodi::addon::GetSettingInt("timeout_seconds", s.timeoutSeconds);
   kodi::addon::GetSettingInt("catchup_start_offset_hours", s.catchupStartOffsetHours);
   kodi::addon::GetSettingBoolean("enable_user_agent_spoofing", s.enableUserAgentSpoofing);
@@ -1051,6 +1052,7 @@ Settings LoadSettings()
         s.password = tmp;
       if (ExtractSettingValue(xml, "dispatcharr_password", tmp))
         s.dispatcharrPassword = tmp;
+      ExtractSettingBool(xml, "enable_dispatcharr_dvr", s.enableDispatcharrDvr);
       ExtractSettingInt(xml, "timeout_seconds", s.timeoutSeconds);
       ExtractSettingInt(xml, "catchup_start_offset_hours", s.catchupStartOffsetHours);
       ExtractSettingBool(xml, "enable_user_agent_spoofing", s.enableUserAgentSpoofing);

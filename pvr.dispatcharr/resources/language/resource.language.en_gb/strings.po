@@ -31,6 +31,14 @@ msgctxt "#30006"
 msgid "Dispatcharr Password"
 msgstr "Dispatcharr Password"
 
+msgctxt "#30007"
+msgid "Enable Dispatcharr DVR backend"
+msgstr "Enable Dispatcharr DVR backend"
+
+msgctxt "#30008"
+msgid "Turn off when connecting to a plain Xtream Codes server. Disables recordings and timers, which require Dispatcharr's API. Requires an addon restart."
+msgstr "Turn off when connecting to a plain Xtream Codes server. Disables recordings and timers, which require Dispatcharr's API. Requires an addon restart."
+
 
 msgctxt "#30100"
 msgid "Streaming"

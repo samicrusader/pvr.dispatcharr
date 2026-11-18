@@ -423,11 +423,24 @@ public:
     // We provide stream URLs and let Kodi handle playback.
     capabilities.SetHandlesInputStream(false);
 
-    // DVR/Recording support via Dispatcharr backend
-    capabilities.SetSupportsRecordings(true);
-    capabilities.SetSupportsTimers(true);
+    // DVR/Recording support via Dispatcharr backend. Plain Xtream Codes servers
+    // have no DVR API, so advertise it only when the Dispatcharr backend is enabled.
+    // Toggling the setting requires an addon restart (see SetSetting).
+    const bool dvr = DvrEnabled();
+    capabilities.SetSupportsRecordings(dvr);
+    capabilities.SetSupportsTimers(dvr);
 
     return PVR_ERROR_NO_ERROR;
+  }
+
+  bool DvrEnabled()
+  {
+    {
+      std::lock_guard<std::mutex> lock(m_mutex);
+      if (m_hasSettingsOverride)
+        return m_settingsOverride.enableDispatcharrDvr;
+    }
+    return xtream::LoadSettings().enableDispatcharrDvr;
   }
 
   void TriggerKodiRefreshThrottled()
@@ -514,7 +527,7 @@ public:
       return PVR_ERROR_NO_ERROR;
 
     if (!m_dispatcharrClient)
-      return PVR_ERROR_SERVER_ERROR;
+      return DvrEnabled() ? PVR_ERROR_SERVER_ERROR : PVR_ERROR_NO_ERROR;
 
     std::vector<dispatcharr::Recording> recordings;
     if (!m_dispatcharrClient->FetchRecordings(recordings))
@@ -768,7 +781,8 @@ public:
 
   PVR_ERROR GetTimers(kodi::addon::PVRTimersResultSet& results) override
   {
-      if (!m_dispatcharrClient) return PVR_ERROR_SERVER_ERROR;
+      if (!m_dispatcharrClient)
+        return DvrEnabled() ? PVR_ERROR_SERVER_ERROR : PVR_ERROR_NO_ERROR;
 
       kodi::Log(ADDON_LOG_DEBUG, "pvr.dispatcharr: GetTimers called");
 
@@ -2474,7 +2488,13 @@ private:
         const std::string signature = settings.server + "\n" +
                                       std::to_string(settings.port) + "\n" +
                                       settings.username + "\n" + password;
-        if (!settings.server.empty() && !settings.username.empty() && !password.empty())
+        if (!settings.enableDispatcharrDvr)
+        {
+          client.reset();
+          clientSignature.clear();
+          previousStatuses.clear();
+        }
+        else if (!settings.server.empty() && !settings.username.empty() && !password.empty())
         {
           if (!client || signature != clientSignature)
           {
@@ -2658,7 +2678,8 @@ private:
                 HashHex(xt.password) + "|fmt=" + ToLower(streamFormat) + "|num=" +
                 ToLower(channelNumbering) + "|flt=" + HashHex(filterRaw) + "|catmode=" +
                 ToLower(categoryFilterMode) + "|catflt=" + HashHex(categoryFilterRaw) + "|sep=" +
-                (filterChannelSeparators ? "1" : "0");
+                (filterChannelSeparators ? "1" : "0") + "|dvr=" +
+                (xt.enableDispatcharrDvr ? "1" : "0");
 
     if (m_cacheSignatureAttempted != sig)
     {
@@ -2684,7 +2705,14 @@ private:
 
       m_xtreamSettings = std::move(xt);
 
-      // Initialize Dispatcharr Client
+      // Initialize Dispatcharr Client (only when the Dispatcharr DVR backend is enabled;
+      // a plain Xtream Codes server would just 404 on /api/accounts/token/).
+      if (!m_xtreamSettings.enableDispatcharrDvr)
+      {
+        m_dispatcharrClient.reset();
+      }
+      else
+      {
       dispatcharr::DvrSettings ds;
       ds.server = m_xtreamSettings.server;
       ds.port = m_xtreamSettings.port;
@@ -2695,6 +2723,7 @@ private:
                       : m_xtreamSettings.password;
       ds.timeoutSeconds = m_xtreamSettings.timeoutSeconds;
       m_dispatcharrClient = std::make_unique<dispatcharr::Client>(ds);
+      }
 
       m_streamFormat = ToLower(streamFormat);
       m_channelNumbering = ToLower(channelNumbering);
@@ -2830,6 +2859,14 @@ public:
       m_cachedSettings.customUserAgent = settingValue.GetString();
     else if (settingName == "xmltv_max_size_mb")
       m_cachedSettings.xmltvMaxSizeMb = settingValue.GetInt();
+    else if (settingName == "dispatcharr_password")
+      m_cachedSettings.dispatcharrPassword = settingValue.GetString();
+    else if (settingName == "enable_play_from_start")
+      m_cachedSettings.enablePlayFromStart = settingValue.GetBoolean();
+    else if (settingName == "use_ffmpegdirect")
+      m_cachedSettings.useFFmpegDirect = settingValue.GetBoolean();
+    else if (settingName == "enable_dispatcharr_dvr")
+      m_cachedSettings.enableDispatcharrDvr = settingValue.GetBoolean();
 
     m_hasCachedSettings = true;
 
@@ -2852,6 +2889,11 @@ public:
         m_pvrClient->TriggerKodiRefreshThrottled();
       }
     }
+
+    // PVR capabilities (recordings/timers) are only queried when the client starts,
+    // so flipping the DVR backend needs a restart to take effect.
+    if (settingName == "enable_dispatcharr_dvr")
+      return ADDON_STATUS_NEED_RESTART;
 
     // Other settings will be applied lazily on next PVR callback.
     return ADDON_STATUS_OK;

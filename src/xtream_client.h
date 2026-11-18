@@ -14,6 +14,7 @@ struct Settings
   std::string username;
   std::string password;
   std::string dispatcharrPassword; // Separate password for API
+  bool enableDispatcharrDvr = true; // Off = plain Xtream Codes server, no Dispatcharr REST calls
   int timeoutSeconds = 30;
 
   bool enableUserAgentSpoofing = false;

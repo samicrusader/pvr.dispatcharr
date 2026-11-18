@@ -44,7 +44,15 @@
             <hidden>true</hidden>
           </control>
         </setting>
+        <setting id="enable_dispatcharr_dvr" type="boolean" label="30007" help="30008">
+          <level>0</level>
+          <default>true</default>
+          <control type="toggle" />
+        </setting>
         <setting id="dispatcharr_password" type="string" label="30006" help="">
+          <dependencies>
+            <dependency type="enable" setting="enable_dispatcharr_dvr">true</dependency>
+          </dependencies>
           <level>0</level>
           <default/>
           <constraints>
