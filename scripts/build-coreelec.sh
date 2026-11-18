@@ -36,6 +36,7 @@ if [ ! -d "${COREELEC_DIR}/.git" ]; then
   git -C "${COREELEC_DIR}" remote add origin "${COREELEC_REPOSITORY}"
   git -C "${COREELEC_DIR}" fetch --depth=1 origin "${COREELEC_REF}"
   git -C "${COREELEC_DIR}" checkout --detach FETCH_HEAD
+  fresh_checkout=1
 else
   echo "Using existing CoreELEC checkout: ${COREELEC_DIR}"
 fi
@@ -48,6 +49,25 @@ else
   echo "ERROR: CoreELEC host compatibility patch does not apply cleanly." >&2
   echo "Use the pinned COREELEC_REF or review the patch against your selected ref." >&2
   exit 1
+fi
+
+# ftp.gnu.org regularly times out from GitHub's runners, and CoreELEC's own
+# source mirrors don't carry every GNU tarball. When COREELEC_GNU_MIRROR is set,
+# point every GNU download at that mirror instead. Only done on a fresh checkout,
+# so a reused checkout still matches the host patch's "already applied" check.
+if [ -n "${COREELEC_GNU_MIRROR:-}" ] && [ "${fresh_checkout:-0}" = 1 ]; then
+  gnu_mirror="${COREELEC_GNU_MIRROR%/}"
+  echo "Rewriting GNU source URLs to ${gnu_mirror}"
+  mapfile -t gnu_pkgs < <(
+    grep -rlE --include=package.mk 'https?://(ftp|ftpmirror)\.gnu\.org/' \
+      "${COREELEC_DIR}/packages" || true
+  )
+  if [ "${#gnu_pkgs[@]}" -gt 0 ]; then
+    sed -i -E \
+      -e "s#https?://ftp\.gnu\.org/(pub/)?gnu/#${gnu_mirror}/#g" \
+      -e "s#https?://ftpmirror\.gnu\.org/(gnu/)?#${gnu_mirror}/#g" \
+      "${gnu_pkgs[@]}"
+  fi
 fi
 
 mkdir -p "${PACKAGE_DIR}"

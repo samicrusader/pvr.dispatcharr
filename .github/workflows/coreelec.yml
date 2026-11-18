@@ -45,6 +45,7 @@ jobs:
       COREELEC_SOURCES_DIR: /tmp/coreelec-sources
       COREELEC_CCACHE_DIR: /tmp/coreelec-ccache
       OUTPUT_DIR: ${{ github.workspace }}/dist/coreelec
+      COREELEC_GNU_MIRROR: https://mirrors.kernel.org/gnu
 
     steps:
       - name: Checkout addon
