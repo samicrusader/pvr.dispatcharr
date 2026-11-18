@@ -73,9 +73,9 @@ jobs:
           path: |
             ${{ env.COREELEC_SOURCES_DIR }}
             ${{ env.COREELEC_CCACHE_DIR }}
-          key: coreelec-21-amlogic-ng-arm-${{ hashFiles('coreelec/**', 'scripts/build-coreelec.sh') }}
+          key: coreelec-21-amlogic-ng-arm-x86v2-${{ hashFiles('coreelec/**', 'scripts/build-coreelec.sh') }}
           restore-keys: |
-            coreelec-21-amlogic-ng-arm-
+            coreelec-21-amlogic-ng-arm-x86v2-
 
       - name: Build installable addon ZIP
         run: ./scripts/build-coreelec.sh

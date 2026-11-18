@@ -1,0 +1,200 @@
+diff --git a/pvr.dispatcharr/resources/language/resource.language.en_gb/strings.po b/pvr.dispatcharr/resources/language/resource.language.en_gb/strings.po
+index 5b0b1d2..5bff9c5 100644
+--- a/pvr.dispatcharr/resources/language/resource.language.en_gb/strings.po
++++ b/pvr.dispatcharr/resources/language/resource.language.en_gb/strings.po
+@@ -31,6 +31,14 @@ msgctxt "#30006"
+ msgid "Dispatcharr Password"
+ msgstr "Dispatcharr Password"
+ 
++msgctxt "#30007"
++msgid "Enable Dispatcharr DVR backend"
++msgstr "Enable Dispatcharr DVR backend"
++
++msgctxt "#30008"
++msgid "Turn off when connecting to a plain Xtream Codes server. Disables recordings and timers, which require Dispatcharr's API. Requires an addon restart."
++msgstr "Turn off when connecting to a plain Xtream Codes server. Disables recordings and timers, which require Dispatcharr's API. Requires an addon restart."
++
+ 
+ msgctxt "#30100"
+ msgid "Streaming"
+diff --git a/pvr.dispatcharr/resources/settings.xml b/pvr.dispatcharr/resources/settings.xml
+index a999e9c..5f27906 100644
+--- a/pvr.dispatcharr/resources/settings.xml
++++ b/pvr.dispatcharr/resources/settings.xml
+@@ -44,7 +44,15 @@
+             <hidden>true</hidden>
+           </control>
+         </setting>
++        <setting id="enable_dispatcharr_dvr" type="boolean" label="30007" help="30008">
++          <level>0</level>
++          <default>true</default>
++          <control type="toggle" />
++        </setting>
+         <setting id="dispatcharr_password" type="string" label="30006" help="">
++          <dependencies>
++            <dependency type="enable" setting="enable_dispatcharr_dvr">true</dependency>
++          </dependencies>
+           <level>0</level>
+           <default/>
+           <constraints>
+diff --git a/src/addon.cpp b/src/addon.cpp
+index 647ac5a..cfef5d4 100644
+--- a/src/addon.cpp
++++ b/src/addon.cpp
+@@ -423,13 +423,26 @@ public:
+     // We provide stream URLs and let Kodi handle playback.
+     capabilities.SetHandlesInputStream(false);
+ 
+-    // DVR/Recording support via Dispatcharr backend
+-    capabilities.SetSupportsRecordings(true);
+-    capabilities.SetSupportsTimers(true);
++    // DVR/Recording support via Dispatcharr backend. Plain Xtream Codes servers
++    // have no DVR API, so advertise it only when the Dispatcharr backend is enabled.
++    // Toggling the setting requires an addon restart (see SetSetting).
++    const bool dvr = DvrEnabled();
++    capabilities.SetSupportsRecordings(dvr);
++    capabilities.SetSupportsTimers(dvr);
+ 
+     return PVR_ERROR_NO_ERROR;
+   }
+ 
++  bool DvrEnabled()
++  {
++    {
++      std::lock_guard<std::mutex> lock(m_mutex);
++      if (m_hasSettingsOverride)
++        return m_settingsOverride.enableDispatcharrDvr;
++    }
++    return xtream::LoadSettings().enableDispatcharrDvr;
++  }
++
+   void TriggerKodiRefreshThrottled()
+   {
+     const auto now = std::chrono::steady_clock::now();
+@@ -514,7 +527,7 @@ public:
+       return PVR_ERROR_NO_ERROR;
+ 
+     if (!m_dispatcharrClient)
+-      return PVR_ERROR_SERVER_ERROR;
++      return DvrEnabled() ? PVR_ERROR_SERVER_ERROR : PVR_ERROR_NO_ERROR;
+ 
+     std::vector<dispatcharr::Recording> recordings;
+     if (!m_dispatcharrClient->FetchRecordings(recordings))
+@@ -768,7 +781,8 @@ public:
+ 
+   PVR_ERROR GetTimers(kodi::addon::PVRTimersResultSet& results) override
+   {
+-      if (!m_dispatcharrClient) return PVR_ERROR_SERVER_ERROR;
++      if (!m_dispatcharrClient)
++        return DvrEnabled() ? PVR_ERROR_SERVER_ERROR : PVR_ERROR_NO_ERROR;
+ 
+       kodi::Log(ADDON_LOG_DEBUG, "pvr.dispatcharr: GetTimers called");
+ 
+@@ -2474,7 +2488,13 @@ private:
+         const std::string signature = settings.server + "\n" +
+                                       std::to_string(settings.port) + "\n" +
+                                       settings.username + "\n" + password;
+-        if (!settings.server.empty() && !settings.username.empty() && !password.empty())
++        if (!settings.enableDispatcharrDvr)
++        {
++          client.reset();
++          clientSignature.clear();
++          previousStatuses.clear();
++        }
++        else if (!settings.server.empty() && !settings.username.empty() && !password.empty())
+         {
+           if (!client || signature != clientSignature)
+           {
+@@ -2658,7 +2678,8 @@ private:
+                 HashHex(xt.password) + "|fmt=" + ToLower(streamFormat) + "|num=" +
+                 ToLower(channelNumbering) + "|flt=" + HashHex(filterRaw) + "|catmode=" +
+                 ToLower(categoryFilterMode) + "|catflt=" + HashHex(categoryFilterRaw) + "|sep=" +
+-                (filterChannelSeparators ? "1" : "0");
++                (filterChannelSeparators ? "1" : "0") + "|dvr=" +
++                (xt.enableDispatcharrDvr ? "1" : "0");
+ 
+     if (m_cacheSignatureAttempted != sig)
+     {
+@@ -2684,7 +2705,14 @@ private:
+ 
+       m_xtreamSettings = std::move(xt);
+ 
+-      // Initialize Dispatcharr Client
++      // Initialize Dispatcharr Client (only when the Dispatcharr DVR backend is enabled;
++      // a plain Xtream Codes server would just 404 on /api/accounts/token/).
++      if (!m_xtreamSettings.enableDispatcharrDvr)
++      {
++        m_dispatcharrClient.reset();
++      }
++      else
++      {
+       dispatcharr::DvrSettings ds;
+       ds.server = m_xtreamSettings.server;
+       ds.port = m_xtreamSettings.port;
+@@ -2695,6 +2723,7 @@ private:
+                       : m_xtreamSettings.password;
+       ds.timeoutSeconds = m_xtreamSettings.timeoutSeconds;
+       m_dispatcharrClient = std::make_unique<dispatcharr::Client>(ds);
++      }
+ 
+       m_streamFormat = ToLower(streamFormat);
+       m_channelNumbering = ToLower(channelNumbering);
+@@ -2830,6 +2859,14 @@ public:
+       m_cachedSettings.customUserAgent = settingValue.GetString();
+     else if (settingName == "xmltv_max_size_mb")
+       m_cachedSettings.xmltvMaxSizeMb = settingValue.GetInt();
++    else if (settingName == "dispatcharr_password")
++      m_cachedSettings.dispatcharrPassword = settingValue.GetString();
++    else if (settingName == "enable_play_from_start")
++      m_cachedSettings.enablePlayFromStart = settingValue.GetBoolean();
++    else if (settingName == "use_ffmpegdirect")
++      m_cachedSettings.useFFmpegDirect = settingValue.GetBoolean();
++    else if (settingName == "enable_dispatcharr_dvr")
++      m_cachedSettings.enableDispatcharrDvr = settingValue.GetBoolean();
+ 
+     m_hasCachedSettings = true;
+ 
+@@ -2853,6 +2890,11 @@ public:
+       }
+     }
+ 
++    // PVR capabilities (recordings/timers) are only queried when the client starts,
++    // so flipping the DVR backend needs a restart to take effect.
++    if (settingName == "enable_dispatcharr_dvr")
++      return ADDON_STATUS_NEED_RESTART;
++
+     // Other settings will be applied lazily on next PVR callback.
+     return ADDON_STATUS_OK;
+   }
+diff --git a/src/xtream_client.cpp b/src/xtream_client.cpp
+index cfd970d..c9b21e6 100644
+--- a/src/xtream_client.cpp
++++ b/src/xtream_client.cpp
+@@ -1027,6 +1027,7 @@ Settings LoadSettings()
+   kodi::addon::GetSettingString("username", s.username);
+   kodi::addon::GetSettingString("password", s.password);
+   kodi::addon::GetSettingString("dispatcharr_password", s.dispatcharrPassword);
++  kodi::addon::GetSettingBoolean("enable_dispatcharr_dvr", s.enableDispatcharrDvr);
+   kodi::addon::GetSettingInt("timeout_seconds", s.timeoutSeconds);
+   kodi::addon::GetSettingInt("catchup_start_offset_hours", s.catchupStartOffsetHours);
+   kodi::addon::GetSettingBoolean("enable_user_agent_spoofing", s.enableUserAgentSpoofing);
+@@ -1051,6 +1052,7 @@ Settings LoadSettings()
+         s.password = tmp;
+       if (ExtractSettingValue(xml, "dispatcharr_password", tmp))
+         s.dispatcharrPassword = tmp;
++      ExtractSettingBool(xml, "enable_dispatcharr_dvr", s.enableDispatcharrDvr);
+       ExtractSettingInt(xml, "timeout_seconds", s.timeoutSeconds);
+       ExtractSettingInt(xml, "catchup_start_offset_hours", s.catchupStartOffsetHours);
+       ExtractSettingBool(xml, "enable_user_agent_spoofing", s.enableUserAgentSpoofing);
+diff --git a/src/xtream_client.h b/src/xtream_client.h
+index 10c2a69..4aad86f 100644
+--- a/src/xtream_client.h
++++ b/src/xtream_client.h
+@@ -14,6 +14,7 @@ struct Settings
+   std::string username;
+   std::string password;
+   std::string dispatcharrPassword; // Separate password for API
++  bool enableDispatcharrDvr = true; // Off = plain Xtream Codes server, no Dispatcharr REST calls
+   int timeoutSeconds = 30;
+ 
+   bool enableUserAgentSpoofing = false;
